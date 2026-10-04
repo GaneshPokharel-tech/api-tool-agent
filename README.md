@@ -187,10 +187,13 @@ POST /upload
 
 ```json
 {
-  "message": "Document uploaded successfully.",
-  "document_id": "47ed3e61-4b78-4cd2-b909-52c64878df0e",
+  "message": "Document indexed successfully.",
+  "document_id": "example-document-id",
   "filename": "example.pdf",
-  "characters": 12540
+  "pages": 21,
+  "chunks": 93,
+  "characters": 109937,
+  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2"
 }
 ```
 
@@ -202,15 +205,19 @@ The generated `document_id` is later used by the `/ask` endpoint.
 
 After uploading a document, users can ask questions about it.
 
-The system:
+The system uses an Advanced Retrieval-Augmented Generation pipeline:
 
-1. Receives the `document_id`
-2. Retrieves the stored document
-3. Gets the extracted document text
-4. Sends the document context and question to Gemini
-5. Returns a document-grounded answer
+1. Receives the `document_id` and user question
+2. Rewrites the question into a focused retrieval query
+3. Creates a local semantic embedding for the query
+4. Performs hybrid retrieval using semantic similarity and lexical overlap
+5. Selects the strongest candidate chunks
+6. Applies Maximum Marginal Relevance (MMR) reranking to reduce redundant context
+7. Rejects weak retrieval results using a minimum relevance threshold
+8. Sends only the best retrieved evidence to Gemini
+9. Generates a grounded answer with source page citations
 
-Gemini is instructed to answer only from the provided document and not invent information.
+The full document is not sent directly to Gemini. Only retrieved evidence is used for answer generation.
 
 ### Endpoint
 
@@ -572,6 +579,8 @@ This demonstrates that the agent can chain multiple API-wrapped tools together.
 | httpx | HTTP API client |
 | Pydantic | Request validation |
 | PyPDF | PDF text extraction |
+| Sentence Transformers | Local semantic embeddings for Advanced RAG |
+| all-MiniLM-L6-v2 | 384-dimensional document and query embeddings |
 | Pandas | Titanic model input preparation |
 | Scikit-learn | Machine-learning model |
 | Joblib | Loading the saved ML model |
@@ -585,7 +594,6 @@ This demonstrates that the agent can chain multiple API-wrapped tools together.
 
 ```text
 api-tool-agent/
-│
 ├── app.py
 ├── README.md
 ├── .env
@@ -600,24 +608,12 @@ api-tool-agent/
 │
 └── src/
     └── api_tool_agent/
-        │
         ├── __init__.py
         ├── agent.py
         ├── api.py
-        │
-        ├── api/
-        │   ├── __init__.py
-        │   └── client.py
-        │
-        ├── prompts/
-        │   ├── __init__.py
-        │   └── system_prompt.py
-        │
-        └── tools/
-            ├── __init__.py
-            ├── document_tool.py
-            ├── weather_tool.py
-            └── titanic_tool.py
+        ├── client.py
+        ├── rag.py
+        └── tools.py
 ```
 
 ---
@@ -627,7 +623,7 @@ api-tool-agent/
 ## 1. Clone the Repository
 
 ```bash
-git clone <your-repository-url>
+git clone https://github.com/GaneshPokharel-tech/api-tool-agent.git
 ```
 
 Move into the project directory:
@@ -919,7 +915,15 @@ User Uploads PDF
  ↓
 POST /upload
  ↓
-PDF Text Extraction
+PDF/TXT Text Extraction
+ ↓
+Page-Aware Chunking
+ ↓
+220-Word Chunks + 40-Word Overlap
+ ↓
+Local SentenceTransformer Embeddings
+ ↓
+In-Memory Vector Index
  ↓
 document_id Generated
  ↓
@@ -931,11 +935,21 @@ ask_document_tool
  ↓
 POST /ask
  ↓
-Document Context + Question
+Query Rewriting
  ↓
-Gemini
+Semantic + Lexical Hybrid Retrieval
  ↓
-Document-Grounded Response
+Top Candidate Chunks
+ ↓
+MMR Reranking
+ ↓
+Minimum Relevance Threshold
+ ↓
+Best Retrieved Evidence
+ ↓
+Gemini Grounded Generation
+ ↓
+Answer + Source Pages
 ```
 
 ---
@@ -1022,15 +1036,18 @@ This project is designed as an assignment and learning project.
 
 Current limitations include:
 
-- Uploaded documents are stored only in memory.
-- Restarting FastAPI removes previously generated `document_id` values.
-- Document Q&A sends extracted document text directly to Gemini.
-- No vector database is currently used.
-- No persistent user authentication is implemented.
+- The RAG vector index is stored only in application memory.
+- Restarting FastAPI removes indexed documents and their `document_id` values.
+- A persistent vector database is not currently used.
+- The local embedding model is loaded into application memory.
+- Query rewriting and final answer generation still depend on the Gemini API.
+- Multi-document retrieval is not currently implemented.
+- Persistent user authentication is not implemented.
+- Persistent conversation memory is not implemented.
 - Weather location resolution depends on Open-Meteo geocoding.
 - The Titanic model predicts passenger fare, not survival.
-- The system is currently designed for local development.
-- The document system currently supports only PDF and TXT files.
+- The application is currently designed primarily for local development.
+- Document ingestion currently supports PDF and TXT files only.
 
 ---
 
@@ -1039,25 +1056,20 @@ Current limitations include:
 Possible future improvements include:
 
 - Persistent document storage
-- Database integration
-- Vector database support
-- Full Retrieval-Augmented Generation pipeline
-- Document chunking
-- Embeddings
-- Semantic search
-- Multi-document question answering
+- Persistent vector database such as FAISS persistence, Chroma, Qdrant, or Pinecone
+- Multi-document and collection-level retrieval
+- Metadata filtering across multiple documents
+- Stronger reranking models such as cross-encoder rerankers
+- Retrieval evaluation using precision, recall, MRR, or RAG-specific evaluation metrics
 - Persistent conversation memory
-- User authentication
+- User authentication and authorization
 - Streaming responses
 - Tool execution visualization
-- API logging
-- Automated tests
+- API logging and observability
+- Automated unit and integration tests
 - Docker support
 - Cloud deployment
-- CI/CD
-- Additional machine-learning tools
-- Additional third-party API tools
-- Multi-modal document support
+- Background document indexing for large files
 
 ---
 
