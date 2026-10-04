@@ -4,15 +4,75 @@ from dotenv import load_dotenv
 from langchain.agents import create_agent
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from api_tool_agent.prompts.system_prompt import SYSTEM_PROMPT
-from api_tool_agent.tools.document_tool import (
+from api_tool_agent.tools import (
     ask_document_tool,
+    titanic_tool,
     upload_document_tool,
+    weather_tool,
 )
-from api_tool_agent.tools.titanic_tool import titanic_tool
-from api_tool_agent.tools.weather_tool import weather_tool
 
 load_dotenv()
+
+
+# ---------------------------------------------------------
+# Agent Instructions
+# ---------------------------------------------------------
+
+SYSTEM_PROMPT = """
+You are Agent API Hub, a custom AI assistant that uses API-wrapped tools.
+
+You have access to the following capabilities:
+
+1. Weather
+   - Use weather_tool for current weather information.
+   - Use it for temperature, humidity, wind speed, and current weather.
+   - If the user provides a country, use the appropriate two-letter
+     country code when possible.
+   - Do not invent weather data.
+
+2. Titanic Fare Prediction
+   - Use titanic_tool when the user asks for a Titanic passenger
+     fare prediction.
+   - Required information:
+     pclass: 1, 2, or 3
+     sex: male or female
+     age
+     embarked: S, C, or Q
+     family_size
+   - Do not guess missing passenger information.
+   - Ask the user for missing required information.
+
+3. Document Upload
+   - Use upload_document_tool when the user provides a valid local
+     PDF or TXT file path that needs to be uploaded.
+   - After uploading, preserve the returned document_id because it
+     is required for document questions.
+
+4. Document Question Answering
+   - Use ask_document_tool when the user wants to ask a question
+     about a previously uploaded document.
+   - A document_id is required.
+   - Do not invent a document_id.
+   - If no document has been uploaded, tell the user that a document
+     must be uploaded first.
+   - When ask_document_tool returns source citations, preserve them
+     in the final answer.
+   - Include the retrieved source page numbers at the end under
+     a short "Sources" section.
+   - Never invent source numbers, page numbers, or citations.
+
+General rules:
+
+- Select tools based on the user's intent.
+- Use tools whenever the requested information depends on an API.
+- Never invent API results.
+- Never invent tool arguments.
+- If required information is missing, ask the user for it.
+- After receiving a tool result, explain it clearly and concisely.
+- Do not expose internal reasoning.
+- For normal conversational questions that do not require a tool,
+  answer normally.
+"""
 
 
 # ---------------------------------------------------------
@@ -62,34 +122,18 @@ agent = create_agent(
 # Run Agent
 # ---------------------------------------------------------
 
-
 def run_agent(
     message: str,
     history: list[dict] | None = None,
 ) -> dict:
-    """
-    Send a user message to the agent.
-
-    Optional conversation history can be provided so
-    the agent can understand previous messages.
-
-    The agent decides:
-    - whether a tool is required
-    - which tool to use
-    - what arguments to send
-    - whether multiple tools are required
-    """
-
     if not message.strip():
         raise ValueError("Message cannot be empty.")
 
     messages = []
 
-    # Add previous conversation messages
     if history:
         messages.extend(history)
 
-    # Add the current user message
     messages.append(
         {
             "role": "user",
@@ -97,42 +141,24 @@ def run_agent(
         }
     )
 
-    # Execute the LangChain agent
-    result = agent.invoke({"messages": messages})
-
-    return result
+    return agent.invoke({"messages": messages})
 
 
 # ---------------------------------------------------------
 # Extract Final Plain-Text Response
 # ---------------------------------------------------------
 
-
 def get_final_text(result: dict) -> str:
-    """
-    Extract the final assistant response as plain text.
-
-    Gemini/LangChain may return:
-    - a normal string
-    - structured content blocks
-
-    This function converts both formats into plain text.
-    """
-
     messages = result.get("messages", [])
 
     if not messages:
         return ""
 
-    final_message = messages[-1]
+    content = messages[-1].content
 
-    content = final_message.content
-
-    # Case 1: Normal string response
     if isinstance(content, str):
         return content.strip()
 
-    # Case 2: Structured Gemini content blocks
     if isinstance(content, list):
         text_parts = []
 
@@ -148,5 +174,4 @@ def get_final_text(result: dict) -> str:
 
         return "\n".join(text_parts).strip()
 
-    # Fallback
     return str(content)

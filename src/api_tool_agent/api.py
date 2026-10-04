@@ -1,34 +1,23 @@
-import os
 import unicodedata
-from io import BytesIO
 from pathlib import Path
 from typing import Literal
-from uuid import uuid4
 
 import httpx
 import joblib
 import pandas as pd
-from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from google import genai
 from pydantic import BaseModel, Field
-from pypdf import PdfReader
 
-load_dotenv()
-
+from api_tool_agent.rag import (
+    answer_question,
+    index_document,
+)
 
 app = FastAPI(
     title="Agent API Hub",
     description="API endpoints used as tools by the custom AI agent.",
     version="0.1.0",
 )
-
-
-# ---------------------------------------------------------
-# Gemini
-# ---------------------------------------------------------
-
-gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
 # ---------------------------------------------------------
@@ -47,13 +36,6 @@ try:
 
 except Exception as exc:
     TITANIC_MODEL_LOAD_ERROR = str(exc)
-
-
-# ---------------------------------------------------------
-# Temporary Document Storage
-# ---------------------------------------------------------
-
-DOCUMENT_STORE: dict[str, dict[str, str]] = {}
 
 
 # ---------------------------------------------------------
@@ -116,79 +98,35 @@ def normalize_location_name(value: str) -> str:
 @app.post("/upload")
 async def upload_document(file: UploadFile = File(...)):
     """
-    Upload a PDF or TXT document and extract its text.
+    Upload and index a PDF or TXT document for Advanced RAG.
+
+    Pipeline:
+    extract -> chunk -> embed -> vector index
     """
 
     filename = file.filename or ""
-    extension = Path(filename).suffix.lower()
-
-    if extension not in {".pdf", ".txt"}:
-        raise HTTPException(
-            status_code=400,
-            detail="Only PDF and TXT files are supported.",
-        )
 
     try:
         file_bytes = await file.read()
 
-        if not file_bytes:
-            raise HTTPException(
-                status_code=400,
-                detail="Uploaded file is empty.",
-            )
+        result = index_document(
+            filename=filename,
+            file_bytes=file_bytes,
+        )
 
-        if extension == ".pdf":
-            reader = PdfReader(BytesIO(file_bytes))
+        return result
 
-            extracted_pages = []
-
-            for page in reader.pages:
-                page_text = page.extract_text()
-
-                if page_text:
-                    extracted_pages.append(page_text)
-
-            text = "\n".join(extracted_pages)
-
-        else:
-            text = file_bytes.decode("utf-8")
-
-        text = text.strip()
-
-        if not text:
-            raise HTTPException(
-                status_code=400,
-                detail="No readable text was found in the document.",
-            )
-
-        document_id = str(uuid4())
-
-        DOCUMENT_STORE[document_id] = {
-            "filename": filename,
-            "text": text,
-        }
-
-        return {
-            "message": "Document uploaded successfully.",
-            "document_id": document_id,
-            "filename": filename,
-            "characters": len(text),
-        }
-
-    except HTTPException:
-        raise
-
-    except UnicodeDecodeError:
+    except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail="TXT file must use UTF-8 encoding.",
-        )
+            detail=str(exc),
+        ) from exc
 
     except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail=f"Unable to process document: {exc}",
-        )
+            detail=f"Unable to index document: {exc}",
+        ) from exc
 
 
 # ---------------------------------------------------------
@@ -199,75 +137,39 @@ async def upload_document(file: UploadFile = File(...)):
 @app.post("/ask")
 async def ask_document(request: AskRequest):
     """
-    Ask a question about a previously uploaded document.
+    Ask a question using the Advanced RAG pipeline.
+
+    Pipeline:
+    rewrite query
+    -> hybrid retrieval
+    -> MMR reranking
+    -> grounded generation
+    -> source citations
     """
 
-    document = DOCUMENT_STORE.get(request.document_id)
+    try:
+        return answer_question(
+            document_id=request.document_id,
+            question=request.question,
+        )
 
-    if document is None:
+    except KeyError as exc:
         raise HTTPException(
             status_code=404,
-            detail="Document not found. Upload the document first.",
-        )
+            detail=str(exc).strip("'"),
+        ) from exc
 
-    question = request.question.strip()
-
-    if not question:
+    except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail="Question cannot be empty.",
-        )
-
-    document_text = document["text"]
-
-    prompt = f"""
-You are a document question-answering assistant.
-
-Answer the user's question using only the information contained
-in the provided document.
-
-If the answer cannot be found in the document, say:
-
-"I could not find that information in the document."
-
-Do not invent information.
-
-DOCUMENT:
-{document_text}
-
-QUESTION:
-{question}
-"""
-
-    try:
-        response = gemini_client.models.generate_content(
-            model="gemini-3.5-flash-lite",
-            contents=prompt,
-        )
-
-        answer = response.text
-
-        if not answer:
-            raise HTTPException(
-                status_code=500,
-                detail="Gemini returned an empty response.",
-            )
-
-        return {
-            "document_id": request.document_id,
-            "filename": document["filename"],
-            "question": question,
-            "answer": answer.strip(),
-        }
-
-    except HTTPException:
-        raise
+            detail=str(exc),
+        ) from exc
 
     except Exception as exc:
         raise HTTPException(
             status_code=500,
             detail=f"Unable to answer question: {exc}",
-        )
+        ) from exc
 
 
 # ---------------------------------------------------------

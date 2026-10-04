@@ -410,7 +410,7 @@ All required endpoints are implemented in a single FastAPI file.
 The API server is located at:
 
 ```text
-src/api_tool_agent/api_server.py
+src/api_tool_agent/api.py
 ```
 
 ---
@@ -603,7 +603,7 @@ api-tool-agent/
         │
         ├── __init__.py
         ├── agent.py
-        ├── api_server.py
+        ├── api.py
         │
         ├── api/
         │   ├── __init__.py
@@ -702,7 +702,7 @@ The application requires two processes:
 Run:
 
 ```bash
-uv run uvicorn api_tool_agent.api_server:app --reload --app-dir src
+uv run uvicorn api_tool_agent.api:app --reload --app-dir src
 ```
 
 The API server will run at:

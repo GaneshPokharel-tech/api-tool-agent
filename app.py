@@ -4,7 +4,7 @@ from api_tool_agent.agent import (
     get_final_text,
     run_agent,
 )
-from api_tool_agent.api.client import upload_document
+from api_tool_agent.client import upload_document
 
 # ---------------------------------------------------------
 # Page Configuration
@@ -182,11 +182,19 @@ Document filename:
 User message:
 {user_message}
 
-If the user is referring to the uploaded document,
-use ask_document_tool with the document ID above.
+Routing rules while a document is active:
 
-Do not ask the user for a local file path because
-the document has already been uploaded.
+- By default, treat the user's knowledge question as a question about
+  the active document.
+- Use ask_document_tool with the document ID above.
+- Do not answer document-mode questions from your own general knowledge.
+- If the RAG tool says the information is not in the document,
+  preserve that answer exactly.
+- Preserve source page citations returned by ask_document_tool.
+- Only bypass document Q&A when the user clearly requests another
+  available capability such as current weather or Titanic fare prediction.
+- Do not ask the user for a local file path because the document
+  has already been uploaded.
 """
 
     # -----------------------------------------------------
